@@ -8,7 +8,6 @@
 # --------------------------------------------------------------------------------
 
 $script:GACL_Registry = @{}
-$script:GACL_History = @()
 $script:GACL_CurrentTenant = $null
 $script:GACL_TokenPath = $null # Disabled by default for security
 
