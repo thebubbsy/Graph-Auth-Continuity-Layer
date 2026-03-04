@@ -1,78 +1,83 @@
-# Microsoft 365 Graph API - BTSA
-### Precision Authentication Schema for Enterprise M365 Orchestration
+# Bubbsy-GACL: Graph Auth Continuity Layer
+### Enterprise-Grade Authentication Propagation for Microsoft Graph Orchestration
 
-**BTS-A** is not merely a script; it is a high-level **architectural schema** designed to solve the systemic challenges of identity management in complex Microsoft 365 environments. By treating authentication as a decoupled, interceptable service layer, BTS-A enables high-density parallel processing and cross-tenant orchestration without administrative friction.
+**GACL** (Graph Auth Continuity Layer) is a high-level **architectural framework** designed to solve systemic identity management challenges in complex, multi-tenant Microsoft 365 environments. By treating authentication as a decoupled, injectable session layer, GACL enables high-density parallel processing and seamless cross-tenant orchestration without administrative friction or redundant sign-in prompts.
 
 > [!NOTE]
-> Engineered by **BUBBSY** (Matthew Bubb). This repository defines the standard for "Implicit Continuity" in M365 automation.
+> Designed by **BUBBSY** (Matthew Bubb). This framework defines the standard for "Session Continuity" in AI-native M365 automation.
 
 ---
 
-## 🏗️ The Architectural Schema
+## 🏗️ The Architectural Philosophy
 
-The BTS-A methodology is built on three core pillars of design:
+The GACL methodology is built on three core pillars of enterprise-grade session design:
 
-1.  **Identity Interception (The "Steal")**: Leveraging the Microsoft Graph SDK's own HTTP request cycle to capture high-privilege bearer tokens from memory without triggering additional MSAL flows.
-2.  **Session Mapping (The Registry)**: A persistent, script-scope schema that maps Bearer tokens to specific Tenant IDs, Display Names, and Organization Contexts.
-3.  **Threaded Propagation**: Seamlessly projecting the captured authentication state across `ForEach-Object -Parallel` worker boundaries, ensuring horizontal scalability.
+1.  **Session Continuity (The Propagation)**: Leveraging the Microsoft Graph SDK's authenticated state to capture and reuse high-privilege bearer tokens across process boundaries.
+2.  **Session Mapping (The Registry)**: A script-scoped, multi-tenant schema that maps authenticated sessions to specific Tenant IDs, Display Names, and Organization Contexts.
+3.  **Threaded Projection**: Projecting a single authenticated identity across `ForEach-Object -Parallel` worker nodes, ensuring horizontal scalability.
 
 ---
 
-## 🚀 Quick Start Example
+## 🚀 Quick Start: Session Projection
 
-Establishing a bridge between the managed Microsoft Graph SDK and your custom execution logic.
+Establishing a continuity bridge between a managed SDK session and parallel execution logic.
 
 ```powershell
 # 1. Establish Primary Identity
 Connect-MgGraph -Scopes "User.Read.All" -NoWelcome
 
-# 2. Trigger Identity Synchronization
-# We call 'me' to force the SDK to generate and verify an active Bearer token.
+# 2. Synchronize Session State
+# Forces the SDK to verify and refresh the active session context.
 $sync = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/me" -Method GET -OutputType HttpResponseMessage
 
-# 3. Extract the Identity Token (The BTS-A "Steal")
-$identityToken = $sync.RequestMessage.Headers.Authorization.Parameter
+# 3. Extract the Continuity Token
+$sessionToken = $sync.RequestMessage.Headers.Authorization.Parameter
 
-# 4. Project Identity to Parallel Workers
-$targets = Get-MgUser -Top 100
+# 4. Project Identity to Parallel Nodes
+$targets = Get-MgUser -Top 50
 $targets | ForEach-Object -Parallel {
-    $token = $using:identityToken
+    $token = $using:sessionToken
     Connect-MgGraph -AccessToken (ConvertTo-SecureString $token -AsPlainText -Force) -NoWelcome
-    Write-Host "[Node $($PID)] BTS-A Context Active. Processing: $($_.DisplayName)"
+    Write-Host "[Node $($PID)] GACL Continuity Active. Processing: $($_.DisplayName)"
 }
 ```
 
 ---
 
-## 🛠️ Core Orchestration: BTSA-Manager.ps1
+## 🛠️ Core Orchestration: GACL-Manager.ps1
 
-The `BTSA-Manager.ps1` script is the centralized framework for multi-tenant identity management.
+The `GACL-Manager.ps1` script is the centralized framework for multi-tenant orchestrations.
+
 ### Key Functions
 
-- `Initialize-BTSA`: Connects to the BTS-A identity layer. Supports optional persistent loading via `-EnablePersistentStorage`.
-- `Invoke-BTSAInterception`: Captures bearer tokens from the active SDK session.
-- `Set-BTSAContext`: Shifts the global SDK state between tenants using the Registry.
-- `Prime-BTSA`: Interactive initialization for harvesting tokens across multiple target environments.
+- `Initialize-GACL`: Connects to the GACL session layer. Supports optional persistent state loading via `-EnablePersistentStorage`.
+- `Invoke-GACLInterception`: Captures the active session token from the SDK environment.
+- `Set-GACLContext`: Seamlessly shifts the global SDK state between tenants using the Registry.
+- `Prime-GACL`: Interactive initialization for establishing session continuity across multiple target environments.
 
 ### Usage
 
 ```powershell
-. .\BTSA-Manager.ps1
-Prime-BTSA # Interactively log into required tenants
-Set-BTSAContext -TenantName "PrimaryTenant"
-# Execution logic...
+. .\GACL-Manager.ps1
+
+# Interactively prime the session registry
+Prime-GACL 
+
+# Switch context without re-authenticating
+Set-GACLContext -TenantName "AcquiredEntity"
+Get-MgUser -Top 5
 ```
 
 ---
 
-## 🎓 Advanced Architecture
+## 🎓 Advanced Patterns
 
 ### The Registry Pattern
 
-For enterprise landscapes (e.g., acquisitions), a single identity is insufficient. BTS-A implements a **Registry Pattern** to manage complex authentication states.
+For complex enterprise landscapes (e.g., acquisitions), a single identity is insufficient. GACL implements a **Registry Pattern** to manage authenticated continuity across multiple endpoints.
 
 ```powershell
-function Sync-BTSAIdentity {
+function Get-GACLIdentity {
     $resp = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/organization" -Method GET -OutputType HttpResponseMessage
     return [PSCustomObject]@{
         Token       = $resp.RequestMessage.Headers.Authorization.Parameter
@@ -80,20 +85,18 @@ function Sync-BTSAIdentity {
     }
 }
 
-$script:BTSARegistry = @{}
+$script:GACLRegistry = @{}
 # ... Populate Registry ...
-$p = $script:BTSARegistry["Primary"]
-Connect-MgGraph -AccessToken (ConvertTo-SecureString $p.Token -AsPlainText -Force)
+$ctx = $script:GACLRegistry["PrimaryTenant"]
+Connect-MgGraph -AccessToken (ConvertTo-SecureString $ctx.Token -AsPlainText -Force)
 ```
 
 ---
 
-## ⚡ Design Philosophy
+## ⚡ Design Advantages
 
-### Why Architecture over Scripts?
-BTS-A is an **Architecture of Resilience**. It monitors the health of the authentication state and provides a "Self-Healing" loop to refresh and re-intercept tokens dynamically.
-
-### Key Functional Patterns
+### Why GACL?
+GACL is an **Architecture of Resilience**. It monitors session health and provides a "Self-Healing" loop to refresh and re-project tokens dynamically across distributed workloads.
 
 - **The "Hop" Pattern**: Moving between acquired entities while maintaining separate, authenticated threads for each.
 - **The "Waterfall" Stagger**: Initializing a single SDK connection and distributing its identity to N child processes.
@@ -102,15 +105,15 @@ BTS-A is an **Architecture of Resilience**. It monitors the health of the authen
 
 ## 🛡️ Security & Integrity
 
-### Pros
+### Key Benefits
 
 - **Architectural Efficiency**: Eliminates redundant auth handshake latency.
-- **Zero Prompt Fatigue**: True Single Sign-On (SSO) experience.
-- **Non-SDK Portability**: Use tokens in raw REST calls or custom APIs.
+- **Zero Prompt Fatigue**: Delivers a true Single Sign-On (SSO) experience for the orchestrator.
+- **Non-SDK Portability**: Captured tokens flow seamlessly into raw REST calls or custom API implementations.
 
-### Security Constants
+### Security Posture
 
-- **Volatile Storage (Standard)**: By default, BTS-A tokens remain strictly in-memory.
-- **Optional Persistence**: While `BTSA-Manager.ps1` supports JSON-based disk caching for convenience, it is **disabled by default** to honor the architectural security model.
-- **Traceability**: Every BTS-A implementation should log the interception point for audit forensics.
+- **Volatile Storage (Standard)**: By default, GACL tokens remain strictly in-memory (volatile).
+- **Optional Persistence**: While JSON-based caching is supported for convenience, it is **disabled by default** to honor the core security model.
+- **Traceability**: Every GACL implementation is designed to log session points for audit forensics.
 - **Lifecycle Management**: Active monitoring of token TTL (Time-To-Live).
