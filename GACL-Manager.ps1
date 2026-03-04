@@ -19,7 +19,7 @@ function Initialize-GACL {
         [string]$TokenPath = "",
         [switch]$EnablePersistentStorage
     )
-    
+
     if ($EnablePersistentStorage -and $TokenPath) {
         $script:GACL_TokenPath = $TokenPath
         if (Test-Path $script:GACL_TokenPath) {
@@ -54,14 +54,14 @@ function Save-GACLState {
 function Invoke-GACLInterception {
     [CmdletBinding()]
     param([string]$TenantName)
-    
+
     try {
         # The core GACL logic: capture the session bearer token from the SDK's HTTP request
         $resp = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/organization?`$top=1" `
                                      -Method GET `
                                      -OutputType HttpResponseMessage `
                                      -ErrorAction SilentlyContinue
-        
+
         if ($resp -and $resp.RequestMessage.Headers.Authorization) {
             $token = $resp.RequestMessage.Headers.Authorization.Parameter
             if ($token) {
@@ -111,16 +111,22 @@ function Set-GACLContext {
 
     # 3. Connect Script Fallback
     if (-not [string]::IsNullOrEmpty($ConnectScript) -and (Test-Path $ConnectScript)) {
-        Write-Host "    [+] Executing External Connection: $ConnectScript" -ForegroundColor DarkCyan
-        . $ConnectScript
-        Invoke-GACLInterception -TenantName $TenantName | Out-Null
-        $script:GACL_CurrentTenant = $TenantName
-        return $true
+        $signature = Get-AuthenticodeSignature -FilePath $ConnectScript
+        if ($signature.Status -eq 'Valid') {
+            Write-Host "    [+] Executing External Connection: $ConnectScript" -ForegroundColor DarkCyan
+            . $ConnectScript
+            Invoke-GACLInterception -TenantName $TenantName | Out-Null
+            $script:GACL_CurrentTenant = $TenantName
+            return $true
+        } else {
+            Write-Warning "Security Block: External script '$ConnectScript' failed signature validation (Status: $($signature.Status)). Execution aborted."
+            Write-Host "    [-] Falling back to manual authentication..." -ForegroundColor Yellow
+        }
     }
 
     # 4. Manual/Interactive Fallback
     Write-Host "    [!] Manual/Interactive Authentication required for '$TenantName'..." -ForegroundColor Yellow
-    
+
     $tenantDesc = if ([string]::IsNullOrEmpty($TenantId)) { "the Common/Default endpoint" } else { "Tenant ID: $TenantId" }
     Write-Host "    [!] Action: A browser window will open for authentication to $tenantDesc." -ForegroundColor Cyan
     Write-Host "    [!] Note: Ensure you complete MFA if prompted." -ForegroundColor DarkCyan
@@ -129,10 +135,10 @@ function Set-GACLContext {
         Scopes    = @('Chat.Read.All', 'User.Read.All', 'AuditLog.Read.All', 'Organization.Read.All', 'offline_access')
         NoWelcome = $true
     }
-    if (-not [string]::IsNullOrEmpty($TenantId)) { 
-        $params['TenantId'] = $TenantId 
+    if (-not [string]::IsNullOrEmpty($TenantId)) {
+        $params['TenantId'] = $TenantId
     }
-    
+
     try {
         Connect-MgGraph @params
         Invoke-GACLInterception -TenantName $TenantName | Out-Null
@@ -161,7 +167,7 @@ function Prime-GACL {
             $name   = Read-Host "  Display Name (e.g., 'PrimaryTenant')"
             $tid    = Read-Host "  Tenant ID / GUID (optional, press Enter for manual/interactive)"
             $script = Read-Host "  Connect Script Path (optional, press Enter for manual/interactive)"
-            
+
             $TenantsToPrime += @{
                 Name          = $name
                 TenantId      = $tid
