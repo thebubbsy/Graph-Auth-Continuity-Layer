@@ -27,7 +27,17 @@ function Initialize-GACL {
                 $cache = Get-Content $script:GACL_TokenPath | ConvertFrom-Json
                 if ($cache.AuthTokens) {
                     foreach ($prop in $cache.AuthTokens.PSObject.Properties) {
-                        $script:GACL_Registry[$prop.Name] = $prop.Value
+                        try {
+                            # Attempt to decrypt the token
+                            $secureToken = $prop.Value | ConvertTo-SecureString
+                            $ptr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureToken)
+                            $plaintext = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($ptr)
+                            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+                            $script:GACL_Registry[$prop.Name] = $plaintext
+                        } catch {
+                            # Fallback: Treat as plaintext if decryption fails (e.g., legacy files or different machine)
+                            $script:GACL_Registry[$prop.Name] = $prop.Value
+                        }
                     }
                 }
             } catch {
@@ -41,8 +51,15 @@ function Initialize-GACL {
 
 function Save-GACLState {
     if ($null -ne $script:GACL_TokenPath) {
+        $encryptedTokens = @{}
+        foreach ($tenant in $script:GACL_Registry.Keys) {
+            $token = $script:GACL_Registry[$tenant]
+            $secureToken = ConvertTo-SecureString $token -AsPlainText -Force
+            $encryptedTokens[$tenant] = ConvertFrom-SecureString -SecureString $secureToken
+        }
+
         $state = @{
-            AuthTokens  = $script:GACL_Registry
+            AuthTokens  = $encryptedTokens
             LastUpdated = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
             Version     = "1.1.0"
         }
