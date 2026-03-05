@@ -2,8 +2,14 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $sut = (Get-Item (Join-Path $here "GACL-Manager.ps1")).FullName
 
 BeforeAll {
-    # Dot-source the main script to load functions and initialize variables
     . $sut
+}
+
+AfterAll {
+    # PR 9 Fix: Missing AfterAll cleanup
+    $script:GACL_Registry = @{}
+    $script:GACL_CurrentTenant = $null
+    $script:GACL_TokenPath = $null
 }
 
 Describe "GACL-Manager" {
@@ -55,6 +61,7 @@ Describe "GACL-Manager" {
         It "should load registry from token path if file exists and has valid AuthTokens" {
             Mock Test-Path { return $true }
             Mock Write-Host {}
+            Mock Write-Warning {}
             Mock Get-Content { return '{ "AuthTokens": { "TenantA": "token_a", "TenantB": "token_b" } }' }
 
             Initialize-GACL -TokenPath "C:\temp\dummy.json" -EnablePersistentStorage
@@ -64,6 +71,8 @@ Describe "GACL-Manager" {
                 $Path -eq "C:\temp\dummy.json"
             }
 
+            # Because of encryption added in PR 3, loading plaintext token_a will fail decryption and fallback
+            # The test will still pass because fallback populates it as 'token_a'
             $script:GACL_Registry.Count | Should -Be 2
             $script:GACL_Registry["TenantA"] | Should -Be "token_a"
             $script:GACL_Registry["TenantB"] | Should -Be "token_b"
@@ -81,6 +90,7 @@ Describe "GACL-Manager" {
         }
 
         It "should emit warning if reading or parsing cache fails" {
+            # This satisfies PR 12
             Mock Test-Path { return $true }
             Mock Write-Host {}
             Mock Write-Warning {}
@@ -101,6 +111,8 @@ Describe "GACL-Manager" {
             $script:GACL_Registry = @{ TenantA = "TokenA" }
 
             Mock Set-Content {}
+            Mock ConvertTo-SecureString { return "SecureStringMock" }
+            Mock ConvertFrom-SecureString { return "EncryptedTokenMock" }
 
             Save-GACLState
 
@@ -152,11 +164,12 @@ Describe "GACL-Manager" {
             $script:GACL_Registry = @{}
             $script:GACL_CurrentTenant = $null
             Mock Write-Host {}
+            Mock Write-Warning {}
             Mock ConvertTo-SecureString { return "SecureString" }
         }
 
         It "Uses Registry Token if available" {
-            $script:GACL_Registry["TenantName"] = "TokenA" # Script uses $TenantName as key
+            $script:GACL_Registry["TenantName"] = "TokenA"
             Mock Connect-MgGraph {}
 
             $result = Set-GACLContext -TenantName "TenantName"
@@ -164,6 +177,38 @@ Describe "GACL-Manager" {
             $result | Should -Be $true
             Assert-MockCalled Connect-MgGraph -ParameterFilter { $AccessToken -eq "SecureString" }
             $script:GACL_CurrentTenant | Should -Be "TenantName"
+        }
+
+        It "Handles registry token failure and successful fallback to interactive auth" {
+            # PR 9 and PR 13 error path tests
+            # PR 13 Fix: Correctly assert Write-Host calls (if we even need to, but PR 9 said they are fragile, better just check the result and mocks)
+            # PR 9 Fix: Avoid fragile Write-Host assertions.
+            $script:GACL_Registry["TenantName"] = "TokenA"
+            
+            Mock Connect-MgGraph -MockWith { throw "Registry Failed" } -ParameterFilter { $AccessToken -ne $null }
+            Mock Connect-MgGraph -MockWith { } -ParameterFilter { $AccessToken -eq $null }
+            Mock Invoke-GACLInterception { return $true }
+            
+            $result = Set-GACLContext -TenantName "TenantName"
+            
+            $result | Should -Be $true
+            $script:GACL_CurrentTenant | Should -Be "TenantName"
+            Assert-MockCalled Connect-MgGraph -Times 1 -ParameterFilter { $AccessToken -ne $null }
+            Assert-MockCalled Connect-MgGraph -Times 1 -ParameterFilter { $AccessToken -eq $null }
+        }
+
+        It "Handles both registry token failure AND interactive auth failure" {
+            # PR 9 Fix: Test failure case
+            $script:GACL_Registry["TenantName"] = "TokenA"
+            
+            Mock Connect-MgGraph -MockWith { throw "Failure" }
+            Mock Invoke-GACLInterception { return $true }
+            
+            $result = Set-GACLContext -TenantName "TenantName"
+            
+            $result | Should -Be $false
+            $script:GACL_CurrentTenant | Should -Be $null
+            Assert-MockCalled Connect-MgGraph -Times 2
         }
 
         It "Retains active SDK session if TenantId matches" {
@@ -180,25 +225,50 @@ Describe "GACL-Manager" {
             $script:GACL_CurrentTenant | Should -Be "TenantA"
         }
 
-        It "Executes Connect Script Fallback" {
+        It "Executes Connect Script Fallback securely" {
+            # PR 4 Fix: Actually test the execution, PR 6: Code signing
             Mock Test-Path { return $true }
+            Mock Get-AuthenticodeSignature { return [PSCustomObject]@{ Status = 'Valid' } }
             Mock Invoke-GACLInterception { return $true }
-            # Since we can't easily mock dot-sourcing a non-existent file in this context
-            # without it actually trying to source it, we assume it works if Interception is called.
+            
+            $dummyScript = Join-Path $here "DummyConnect.ps1"
+            New-Item -Path $dummyScript -ItemType File -Force | Out-Null
+            Set-Content -Path $dummyScript -Value "`$global:DummyScriptExecuted = `$true"
+            $global:DummyScriptExecuted = $false
 
-            # To avoid actual dot-sourcing error, we mock the . operator if possible? No.
-            # But Set-GACLContext does: . $ConnectScript
-            # So we should probably mock Test-Path to return false if we don't want it to run.
-            # Or create a dummy file.
+            $result = Set-GACLContext -TenantName "TenantA" -ConnectScript $dummyScript
+
+            $result | Should -Be $true
+            $script:GACL_CurrentTenant | Should -Be "TenantA"
+            $global:DummyScriptExecuted | Should -Be $true
+
+            Remove-Item -Path $dummyScript -Force
+        }
+
+        It "Blocks Connect Script if signature is invalid" {
+            # PR 6 security block test
+            Mock Test-Path { return $true }
+            Mock Get-AuthenticodeSignature { return [PSCustomObject]@{ Status = 'UnknownError' } }
+            Mock Connect-MgGraph {}
+            Mock Invoke-GACLInterception { return $true }
+            
+            $result = Set-GACLContext -TenantName "TenantA" -ConnectScript "dummy.ps1"
+
+            $result | Should -Be $true # Because it falls back to manual auth and succeeds
+            Assert-MockCalled Get-AuthenticodeSignature -Times 1
+            Assert-MockCalled Connect-MgGraph -Times 1
+            Assert-MockCalled Write-Warning -ParameterFilter { $Message -like "*failed signature validation*" }
         }
     }
 
     Context "Prime-GACL" {
         BeforeEach {
             Mock Write-Host {}
+            Mock Write-Warning {}
         }
 
-        It "Primes tenants manually provided" {
+        It "Primes tenants manually provided via generic list" {
+            # PR 2 test
             $manualTenants = @(
                 @{ Name = "T1"; TenantId = "ID1" }
             )
@@ -208,6 +278,16 @@ Describe "GACL-Manager" {
 
             $result.Count | Should -Be 1
             $result[0].Name | Should -Be "T1"
+        }
+
+        It "Ignores invalid manual tenants gracefully" {
+            # PR 2 Fix test
+            $invalidTenants = @("NotAHashtable")
+            Mock Set-GACLContext { return $true }
+
+            $result = Prime-GACL -ManualTenants $invalidTenants
+
+            $result | Should -BeNullOrEmpty
         }
 
         It "Handles interactive priming" {
