@@ -24,7 +24,8 @@ function Initialize-GACL {
         if (Test-Path $script:GACL_TokenPath) {
             Write-Host "  [GACL] Loading cached Identity Registry from $($script:GACL_TokenPath)..." -ForegroundColor Magenta
             try {
-                $cache = Get-Content $script:GACL_TokenPath | ConvertFrom-Json
+                # Applying PR 11: Get-Content -Raw
+                $cache = Get-Content $script:GACL_TokenPath -Raw | ConvertFrom-Json
                 if ($cache.AuthTokens) {
                     foreach ($prop in $cache.AuthTokens.PSObject.Properties) {
                         try {
@@ -36,6 +37,7 @@ function Initialize-GACL {
                             $script:GACL_Registry[$prop.Name] = $plaintext
                         } catch {
                             # Fallback: Treat as plaintext if decryption fails (e.g., legacy files or different machine)
+                            Write-Warning "  [GACL] Security Warning: Falling back to plaintext token for $($prop.Name). DPAPI decryption failed (this may be expected if migrating legacy files or switching machines)."
                             $script:GACL_Registry[$prop.Name] = $prop.Value
                         }
                     }
@@ -121,17 +123,28 @@ function Set-GACLContext {
         Write-Host "    [+] Retaining active SDK session ($($ctx.Account))..." -ForegroundColor DarkCyan
         $script:GACL_CurrentTenant = $TenantName
         # Intercept to ensure registry is primed
-        Invoke-GACLInterception -TenantName $TenantName | Out-Null
+        $null = Invoke-GACLInterception -TenantName $TenantName
         return $true
     }
 
     # 3. Connect Script Fallback
     if (-not [string]::IsNullOrEmpty($ConnectScript) -and (Test-Path $ConnectScript)) {
-        Write-Host "    [+] Executing External Connection: $ConnectScript" -ForegroundColor DarkCyan
-        . $ConnectScript
-        Invoke-GACLInterception -TenantName $TenantName | Out-Null
-        $script:GACL_CurrentTenant = $TenantName
-        return $true
+        try {
+            $signature = Get-AuthenticodeSignature -FilePath $ConnectScript -ErrorAction Stop
+            if ($signature.Status -eq 'Valid') {
+                Write-Host "    [+] Executing External Connection: $ConnectScript" -ForegroundColor DarkCyan
+                . $ConnectScript
+                $null = Invoke-GACLInterception -TenantName $TenantName
+                $script:GACL_CurrentTenant = $TenantName
+                return $true
+            } else {
+                Write-Warning "Security Block: External script '$ConnectScript' failed signature validation (Status: $($signature.Status)). Execution aborted."
+                Write-Host "    [-] Falling back to manual authentication..." -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Warning "Security Block: Failed to validate external script signature. Error: $($_.Exception.Message)"
+            Write-Host "    [-] Falling back to manual authentication..." -ForegroundColor Yellow
+        }
     }
 
     # 4. Manual/Interactive Fallback
@@ -150,8 +163,8 @@ function Set-GACLContext {
     }
 
     try {
-        Connect-MgGraph @params
-        Invoke-GACLInterception -TenantName $TenantName | Out-Null
+        Connect-MgGraph @params -ErrorAction Stop
+        $null = Invoke-GACLInterception -TenantName $TenantName
         $script:GACL_CurrentTenant = $TenantName
         return $true
     } catch {
@@ -185,7 +198,6 @@ function Prime-GACL {
             })
         }
     } elseif ($null -ne $ManualTenants -and $ManualTenants.Count -gt 0) {
-        # Note: applying KILO codes' fix for PR 2 right away: safer handling of ManualTenants
         try {
             foreach ($mt in $ManualTenants) {
                 if ($mt -is [hashtable]) {
@@ -202,7 +214,7 @@ function Prime-GACL {
 
     Write-Host "`n[!] GACL PRIMING PHASE: Capturing Authenticated Sessions..." -ForegroundColor Cyan
     foreach ($t in $TenantsToPrime) {
-        Set-GACLContext -TenantName $t.Name -TenantId $t.TenantId -ConnectScript $t.ConnectScript | Out-Null
+        $null = Set-GACLContext -TenantName $t.Name -TenantId $t.TenantId -ConnectScript $t.ConnectScript
     }
 
     if ($TenantsToPrime.Count -ge 2) {
@@ -211,13 +223,13 @@ function Prime-GACL {
         $t2 = $TenantsToPrime[1]
 
         Write-Host "  [Step 1] Switching back to $($t1.Name)..." -ForegroundColor DarkGray
-        Set-GACLContext -TenantName $t1.Name -TenantId $t1.TenantId -ConnectScript $t1.ConnectScript | Out-Null
+        $null = Set-GACLContext -TenantName $t1.Name -TenantId $t1.TenantId -ConnectScript $t1.ConnectScript
 
         Write-Host "  [Step 2] Switching to $($t2.Name)..." -ForegroundColor DarkGray
-        Set-GACLContext -TenantName $t2.Name -TenantId $t2.TenantId -ConnectScript $t2.ConnectScript | Out-Null
+        $null = Set-GACLContext -TenantName $t2.Name -TenantId $t2.TenantId -ConnectScript $t2.ConnectScript
 
         Write-Host "  [Step 3] Verification: Switching back to $($t1.Name)..." -ForegroundColor DarkGray
-        Set-GACLContext -TenantName $t1.Name -TenantId $t1.TenantId -ConnectScript $t1.ConnectScript | Out-Null
+        $null = Set-GACLContext -TenantName $t1.Name -TenantId $t1.TenantId -ConnectScript $t1.ConnectScript
     }
 
     return $TenantsToPrime
