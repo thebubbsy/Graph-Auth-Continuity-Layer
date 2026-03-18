@@ -13,9 +13,10 @@ AfterAll {
 }
 
 Describe "GACL-Manager" {
-    BeforeAll {
+    BeforeEach {
         Mock Write-Host {}
         Mock Test-Path { return $false }
+        Mock Write-Warning {}
     }
 
     Context "Initialize-GACL" {
@@ -25,8 +26,6 @@ Describe "GACL-Manager" {
         }
 
         It "should use volatile memory mode when persistent storage is not enabled" {
-            Mock Write-Host {}
-
             Initialize-GACL
 
             Assert-MockCalled Write-Host -Times 1 -ParameterFilter {
@@ -36,8 +35,6 @@ Describe "GACL-Manager" {
         }
 
         It "should use volatile memory mode when TokenPath is not provided even if EnablePersistentStorage is switched on" {
-            Mock Write-Host {}
-
             Initialize-GACL -EnablePersistentStorage
 
             Assert-MockCalled Write-Host -Times 1 -ParameterFilter {
@@ -47,8 +44,6 @@ Describe "GACL-Manager" {
         }
 
         It "should set GACL_TokenPath but do nothing else if file does not exist" {
-            Mock Test-Path { return $false }
-
             Initialize-GACL -TokenPath "C:\temp\dummy.json" -EnablePersistentStorage
 
             $script:GACL_TokenPath | Should -Be "C:\temp\dummy.json"
@@ -60,8 +55,6 @@ Describe "GACL-Manager" {
 
         It "should load registry from token path if file exists and has valid AuthTokens" {
             Mock Test-Path { return $true }
-            Mock Write-Host {}
-            Mock Write-Warning {}
             Mock Get-Content { return '{ "AuthTokens": { "TenantA": "token_a", "TenantB": "token_b" } }' }
 
             Initialize-GACL -TokenPath "C:\temp\dummy.json" -EnablePersistentStorage
@@ -80,7 +73,6 @@ Describe "GACL-Manager" {
 
         It "should handle JSON without AuthTokens property gracefully" {
             Mock Test-Path { return $true }
-            Mock Write-Host {}
             Mock Get-Content { return '{ "OtherData": "value" }' }
 
             Initialize-GACL -TokenPath "C:\temp\dummy.json" -EnablePersistentStorage
@@ -92,8 +84,6 @@ Describe "GACL-Manager" {
         It "should emit warning if reading or parsing cache fails" {
             # This satisfies PR 12
             Mock Test-Path { return $true }
-            Mock Write-Host {}
-            Mock Write-Warning {}
             Mock Get-Content { throw "File read error" }
 
             Initialize-GACL -TokenPath "C:\temp\dummy.json" -EnablePersistentStorage
@@ -163,8 +153,6 @@ Describe "GACL-Manager" {
         BeforeEach {
             $script:GACL_Registry = @{}
             $script:GACL_CurrentTenant = $null
-            Mock Write-Host {}
-            Mock Write-Warning {}
             Mock ConvertTo-SecureString { return "SecureString" }
         }
 
@@ -263,8 +251,6 @@ Describe "GACL-Manager" {
 
     Context "Prime-GACL" {
         BeforeEach {
-            Mock Write-Host {}
-            Mock Write-Warning {}
         }
 
         It "Primes tenants manually provided via generic list" {
