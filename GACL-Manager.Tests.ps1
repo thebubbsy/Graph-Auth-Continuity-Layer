@@ -225,6 +225,22 @@ Describe "GACL-Manager" {
             $script:GACL_CurrentTenant | Should -Be "TenantA"
         }
 
+        It "Bypasses active SDK session if TenantId mismatches" {
+            $mockContext = [PSCustomObject]@{
+                TenantId = "OLD_ID"
+                Account = "user@domain.com"
+            }
+            Mock Get-MgContext { return $mockContext }
+            Mock Connect-MgGraph {}
+            Mock Invoke-GACLInterception { return $true }
+
+            $result = Set-GACLContext -TenantName "TenantA" -TenantId "NEW_ID"
+
+            $result | Should -Be $true
+            Assert-MockCalled Connect-MgGraph -Times 1
+            $script:GACL_CurrentTenant | Should -Be "TenantA"
+        }
+
         It "Executes Connect Script Fallback securely" {
             # PR 4 Fix: Actually test the execution, PR 6: Code signing
             Mock Test-Path { return $true }
