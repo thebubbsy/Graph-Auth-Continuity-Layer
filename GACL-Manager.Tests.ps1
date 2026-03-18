@@ -148,6 +148,7 @@ Describe "GACL-Manager" {
 
             $result | Should -Be $true
             $script:GACL_Registry["TenantA"] | Should -Be "MockToken"
+            Assert-MockCalled Save-GACLState -Times 0
         }
 
         It "Returns false on failure" {
@@ -166,17 +167,44 @@ Describe "GACL-Manager" {
             Mock Write-Host {}
             Mock Write-Warning {}
             Mock ConvertTo-SecureString { return "SecureString" }
+            Mock Save-GACLState {}
         }
 
         It "Uses Registry Token if available" {
             $script:GACL_Registry["TenantName"] = "TokenA"
             Mock Connect-MgGraph {}
+            Mock Save-GACLState {}
 
             $result = Set-GACLContext -TenantName "TenantName"
 
             $result | Should -Be $true
             Assert-MockCalled Connect-MgGraph -ParameterFilter { $AccessToken -eq "SecureString" }
             $script:GACL_CurrentTenant | Should -Be "TenantName"
+            Assert-MockCalled Save-GACLState -Times 0
+        }
+
+        It "Saves state on interception when SkipSave is not specified" {
+            Mock Get-MgContext { return $null }
+            Mock Connect-MgGraph {}
+            Mock Invoke-GACLInterception { return $true }
+            Mock Save-GACLState {}
+
+            $result = Set-GACLContext -TenantName "TenantName"
+
+            $result | Should -Be $true
+            Assert-MockCalled Save-GACLState -Times 1
+        }
+
+        It "Does not save state on interception when SkipSave is specified" {
+            Mock Get-MgContext { return $null }
+            Mock Connect-MgGraph {}
+            Mock Invoke-GACLInterception { return $true }
+            Mock Save-GACLState {}
+
+            $result = Set-GACLContext -TenantName "TenantName" -SkipSave
+
+            $result | Should -Be $true
+            Assert-MockCalled Save-GACLState -Times 0
         }
 
         It "Handles registry token failure and successful fallback to interactive auth" {
@@ -265,19 +293,24 @@ Describe "GACL-Manager" {
         BeforeEach {
             Mock Write-Host {}
             Mock Write-Warning {}
+            Mock Save-GACLState {}
         }
 
-        It "Primes tenants manually provided via generic list" {
+        It "Primes tenants manually provided via generic list and saves once" {
             # PR 2 test
             $manualTenants = @(
-                @{ Name = "T1"; TenantId = "ID1" }
+                @{ Name = "T1"; TenantId = "ID1" },
+                @{ Name = "T2"; TenantId = "ID2" }
             )
             Mock Set-GACLContext { return $true }
+            Mock Save-GACLState {}
 
             $result = Prime-GACL -ManualTenants $manualTenants
 
-            $result.Count | Should -Be 1
+            $result.Count | Should -Be 2
             $result[0].Name | Should -Be "T1"
+            Assert-MockCalled Set-GACLContext -Times 2 -ParameterFilter { $SkipSave -eq $true }
+            Assert-MockCalled Save-GACLState -Times 1
         }
 
         It "Ignores invalid manual tenants gracefully" {

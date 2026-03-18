@@ -84,7 +84,6 @@ function Invoke-GACLInterception {
             $token = $resp.RequestMessage.Headers.Authorization.Parameter
             if ($token) {
                 $script:GACL_Registry[$TenantName] = $token
-                Save-GACLState
                 return $true
             }
         }
@@ -100,7 +99,8 @@ function Set-GACLContext {
         [Parameter(Mandatory=$true)]
         [string]$TenantName,
         [string]$TenantId = '',
-        [string]$ConnectScript = ''
+        [string]$ConnectScript = '',
+        [switch]$SkipSave
     )
 
     Write-Host "  [GACL] Context Shift: $TenantName..." -ForegroundColor Cyan
@@ -123,7 +123,9 @@ function Set-GACLContext {
         Write-Host "    [+] Retaining active SDK session ($($ctx.Account))..." -ForegroundColor DarkCyan
         $script:GACL_CurrentTenant = $TenantName
         # Intercept to ensure registry is primed
-        $null = Invoke-GACLInterception -TenantName $TenantName
+        if ((Invoke-GACLInterception -TenantName $TenantName) -and -not $SkipSave) {
+            Save-GACLState
+        }
         return $true
     }
 
@@ -134,7 +136,9 @@ function Set-GACLContext {
             if ($signature.Status -eq 'Valid') {
                 Write-Host "    [+] Executing External Connection: $ConnectScript" -ForegroundColor DarkCyan
                 . $ConnectScript
-                $null = Invoke-GACLInterception -TenantName $TenantName
+                if ((Invoke-GACLInterception -TenantName $TenantName) -and -not $SkipSave) {
+                    Save-GACLState
+                }
                 $script:GACL_CurrentTenant = $TenantName
                 return $true
             } else {
@@ -164,7 +168,9 @@ function Set-GACLContext {
 
     try {
         Connect-MgGraph @params -ErrorAction Stop
-        $null = Invoke-GACLInterception -TenantName $TenantName
+        if ((Invoke-GACLInterception -TenantName $TenantName) -and -not $SkipSave) {
+            Save-GACLState
+        }
         $script:GACL_CurrentTenant = $TenantName
         return $true
     } catch {
@@ -214,8 +220,9 @@ function Prime-GACL {
 
     Write-Host "`n[!] GACL PRIMING PHASE: Capturing Authenticated Sessions..." -ForegroundColor Cyan
     foreach ($t in $TenantsToPrime) {
-        $null = Set-GACLContext -TenantName $t.Name -TenantId $t.TenantId -ConnectScript $t.ConnectScript
+        $null = Set-GACLContext -TenantName $t.Name -TenantId $t.TenantId -ConnectScript $t.ConnectScript -SkipSave
     }
+    Save-GACLState
 
     if ($TenantsToPrime.Count -ge 2) {
         Write-Host "`n[!] GACL VERIFICATION: Testing seamless 1->2->1 switching..." -ForegroundColor Magenta
