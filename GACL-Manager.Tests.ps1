@@ -58,10 +58,11 @@ Describe "GACL-Manager" {
             $script:GACL_Registry.Count | Should -Be 0
         }
 
-        It "should load registry from token path if file exists and has valid AuthTokens" {
+        It "should skip tokens from token path if decryption fails (security fix)" {
             Mock Test-Path { return $true }
             Mock Write-Host {}
             Mock Write-Warning {}
+            # Providing plaintext tokens that will fail ConvertTo-SecureString in the try block
             Mock Get-Content { return '{ "AuthTokens": { "TenantA": "token_a", "TenantB": "token_b" } }' }
 
             Initialize-GACL -TokenPath "C:\temp\dummy.json" -EnablePersistentStorage
@@ -71,11 +72,12 @@ Describe "GACL-Manager" {
                 $Path -eq "C:\temp\dummy.json"
             }
 
-            # Because of encryption added in PR 3, loading plaintext token_a will fail decryption and fallback
-            # The test will still pass because fallback populates it as 'token_a'
-            $script:GACL_Registry.Count | Should -Be 2
-            $script:GACL_Registry["TenantA"] | Should -Be "token_a"
-            $script:GACL_Registry["TenantB"] | Should -Be "token_b"
+            # Decryption fails because tokens are plaintext 'token_a'/'token_b'
+            # Following security fix, they must be skipped, not added to registry
+            $script:GACL_Registry.Count | Should -Be 0
+            Assert-MockCalled Write-Warning -Times 2 -ParameterFilter {
+                $Message -like "*Security Alert: Skipping token*"
+            }
         }
 
         It "should handle JSON without AuthTokens property gracefully" {

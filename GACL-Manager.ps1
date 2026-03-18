@@ -36,9 +36,8 @@ function Initialize-GACL {
                             [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
                             $script:GACL_Registry[$prop.Name] = $plaintext
                         } catch {
-                            # Fallback: Treat as plaintext if decryption fails (e.g., legacy files or different machine)
-                            Write-Warning "  [GACL] Security Warning: Falling back to plaintext token for $($prop.Name). DPAPI decryption failed (this may be expected if migrating legacy files or switching machines)."
-                            $script:GACL_Registry[$prop.Name] = $prop.Value
+                            # Security Fix: Do NOT fall back to plaintext. Skip the token if decryption fails.
+                            Write-Warning "  [GACL] Security Alert: Skipping token for $($prop.Name). DPAPI decryption failed. This token cannot be used securely on this machine."
                         }
                     }
                 }
